@@ -2,14 +2,14 @@
 
 ## Project overview
 This project is about analyzing the used car market in Slovakia.  
-I collected the data myself from autobazar.sk and then explored how car prices are connected with age, mileage, brand, fuel, etc. The main idea was to understand depreciation and price patterns, and later to try some machine learning for price prediction.  
+I collected the data myself and then explored how car prices are connected with age, mileage, brand, fuel, etc. The main idea was to understand depreciation and price patterns, and later to try some machine learning for price prediction.  
 
 This is more like a learning project, I have background in metallurgy (PhD) but I want to move into Data Science, so I am building portfolio step by step.
 
 ---
 
 ## Dataset
-- Source: scraped listings from autobazar.sk  
+- Source: scraped listings from original car marketplace in Slovakia
 - Data: one day snapshot (August 2025)  
 - Size: ~20 000 listings after cleaning  
 - Main columns: Price, Brand, Model, Year, Mileage, Power, Fuel, Transmission, Condition, Emission, Engine volume  
@@ -61,7 +61,7 @@ Important: since the dataset was collected only for one day, it might not be ful
 ---
 
 ## Limitations
-- Data collected only one day → snapshot, not the full picture.  
+- Data collected only one day - snapshot, not the full picture.  
 - Some noisy or missing values (models listed as “unknown”, strange engine data).  
 - Prices are listing prices, not actual sale prices.  
 
@@ -82,4 +82,4 @@ Important: since the dataset was collected only for one day, it might not be ful
     bash
     pip install -r requirements.txt
 3. Run EDA notebook
-    jupyter notebook notebooks/eda_car_market.ipynb
+    jupyter notebook EDA_notebook.ipynb
