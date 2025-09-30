@@ -33,6 +33,8 @@
 # **7. Correlation Heatmaps / Feature Relationships**
 #    - Price vs numerical features
 #    - Cross-tab of categorical features
+#
+# **8. VIF Analysis for Multicollinearity**
 
 
 import pandas as pd
@@ -41,6 +43,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_theme(context="notebook",style="whitegrid")
 import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from statsmodels.tools.tools import add_constant
 
 df = pd.read_csv("data/cleaned_automarket_autos.csv")
 
@@ -672,11 +676,182 @@ plt.show()
 #     -Manual gearboxes are mostly confined to petrol/diesel cars, while hybrids and EVs are dominated by automatics.
 #     -This reinforces that automatic transmission is becoming the default for “modern” fuel types, while manuals remain mostly in the budget ICE (internal combustion engine) category.
 
-# ### Takeaway:
-# Prices in Slovakia’s used car market are mainly driven by age, mileage, and brand positioning. 
-# Premium brands (Mercedes, BMW, Audi) depreciate more slowly, while mileage cliffs (50–100k km, 150–200k km) mark clear price drops. 
-# Transmission and fuel type further segment the market: automatics and alternative fuels hold higher value, while LPG/CNG and older emission standards are cheapest. 
-# Outlier detection highlights both overpriced dealer listings and distressed sales.
+### 8. VIF Analysis for Multicollinearity
+# Keep only Car_Age, drop Year and Year_bin to avoid multicollinearity.
+num_cols = ["Car_Age","Mileage_km","Power_kW"]
+cat_cols = ["Brand","Body","Fuel","Transmission_simple","Engine_bin"]
+# One-hot encode categorical variables
+X_num = df_eda[num_cols].apply(pd.to_numeric, errors="coerce")
+X_cat = pd.get_dummies(df_eda[cat_cols], drop_first=True, dtype=float)
+
+features_encoded = pd.concat([X_num, X_cat], axis=1)
+features_encoded = features_encoded.fillna(0)
+
+X_vif = add_constant(features_encoded)
+vif = pd.DataFrame({
+    "Feature": X_vif.columns,
+    "VIF": [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+}).sort_values("VIF", ascending=False)
+
+print(vif.head(20))
+
+# VIF is very high for some brands (e.g., Brand_Skoda, Brand_VW)
+# This is likely due to dominance of these brands in the dataset.
+# However, since Brand is a key predictor of Price, I will keep it, but I will group it by market segment.
+
+# Group brands by market segment
+brand_to_segment = {
+    # Luxury / Premium
+    "Audi": "Luxury", "BMW": "Luxury", "Mercedes": "Luxury",
+    "Porsche": "Luxury", "Jaguar": "Luxury", "Lexus": "Luxury",
+    "Land Rover": "Luxury", "Maserati": "Luxury", "Bentley": "Luxury",
+    "Aston Martin": "Luxury", "Ferrari": "Luxury", "Cadillac": "Luxury",
+    "Lincoln": "Luxury", "Alpina": "Luxury", "Hongqi": "Luxury",
+    
+    # Upper Midrange
+    "Volkswagen": "Upper Midrange", "Volvo": "Upper Midrange",
+    "Mini": "Upper Midrange", "Cupra": "Upper Midrange",
+    
+    # Mainstream / Midrange
+    "Skoda": "Midrange", "Kia": "Midrange", "Hyundai": "Midrange",
+    "Toyota": "Midrange", "Ford": "Midrange", "Peugeot": "Midrange",
+    "Renault": "Midrange", "Citroën": "Midrange", "Seat": "Midrange",
+    "Mazda": "Midrange", "Honda": "Midrange", "Nissan": "Midrange",
+    "Subaru": "Midrange",
+    
+    # Budget / Economy
+    "Dacia": "Budget", "Fiat": "Budget", "Opel": "Budget",
+    "Suzuki": "Budget", "Lada": "Budget", "SsangYong": "Budget",
+    
+    # Commercial / Utility
+    "MAN": "Commercial", "Iveco": "Commercial", "Isuzu": "Commercial",
+    "Piaggio": "Commercial",
+    
+    # US Brands
+    "Jeep": "US SUV", "Dodge": "US SUV", "Chevrolet": "US SUV",
+    "Chrysler": "US SUV", "Buick": "US SUV",
+    
+    # Electric Focused
+    "Tesla": "Electric Focused", "Smart": "Electric Focused", "MG": "Electric Focused",
+    
+    # Other / Rare
+    "DS": "Other", "Dongfeng": "Other", "Mahindra": "Other", "Simca": "Other",
+    "Daewoo": "Other", "Infiniti": "Other",
+    "Abarth": "Other", "Alfa Romeo": "Other",
+}
+
+# Apply mapping to DataFrame
+df_eda["Brand_Segment"] = df_eda["Brand"].map(brand_to_segment).fillna("Other")
+
+# Check results
+print(df_eda["Brand_Segment"].value_counts())
+
+# Let's check VIF again with Brand_Segment
+cat_cols = ["Brand_Segment","Body","Fuel","Transmission_simple","Engine_bin"]
+X_num = df_eda[num_cols].apply(pd.to_numeric, errors="coerce")
+X_cat = pd.get_dummies(df_eda[cat_cols], drop_first=True, dtype=float)
+
+features_encoded = pd.concat([X_num, X_cat], axis=1)
+features_encoded = features_encoded.fillna(0)
+
+# Check vif again
+X_vif = add_constant(features_encoded)
+vif = pd.DataFrame({
+    "Feature": X_vif.columns,
+    "VIF": [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+}).sort_values("VIF", ascending=False)
+
+print(vif.head(20))
+
+# Encode Fuel and Body with numbers for simplicity
+# Define manual mapping for Fuel
+fuel_mapping = {
+    "Petrol": 0,
+    "Diesel": 1,
+    "Electric": 2,
+    "LPG": 3,
+    "CNG": 4,
+    "Hybrid Petrol": 5,
+    "Hybrid Diesel": 6,
+    "Plug-in Hybrid": 7,
+    "Unknown": 8
+}
+
+# Apply mapping
+df_eda["Fuel_encoded"] = df_eda["Fuel"].map(fuel_mapping)
+
+print(df_eda[["Fuel", "Fuel_encoded"]].head(10))
+print("Unique encoded values:", df_eda["Fuel_encoded"].unique())
+
+# Define manual mapping for Body
+body_mapping = {
+    "combi": 0,
+    "hatchback": 1,
+    "suv": 2,
+    "van/mpv": 3,
+    "sedan": 4,
+    "utility": 5,
+    "unknown": 6,
+    "coupe": 7,
+    "cabrio": 8,
+    "other": 9,
+    "pickup": 10
+}
+
+# Apply mapping
+df_eda["Body_encoded"] = df_eda["Body"].map(body_mapping)
+
+print(df_eda[["Body", "Body_encoded"]].head(10))
+print("Unique encoded values:", df_eda["Body_encoded"].unique())
+
+# Use Fuel_encoded and Body_encoded for VIF check
+cat_cols = ["Brand_Segment","Transmission_simple","Engine_bin"]
+num_cols = ["Car_Age","Mileage_km","Power_kW","Fuel_encoded","Body_encoded"]
+
+X_num = df_eda[num_cols].apply(pd.to_numeric, errors="coerce")
+X_cat = pd.get_dummies(df_eda[cat_cols], drop_first=True, dtype=float)
+
+features_encoded = pd.concat([X_num, X_cat], axis=1)
+features_encoded = features_encoded.fillna(0)
+
+# Check vif again
+X_vif = add_constant(features_encoded)
+vif = pd.DataFrame({
+    "Feature": X_vif.columns,
+    "VIF": [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+}).sort_values("VIF", ascending=False)
+
+print(vif.head(20))
+
+# ### Multicollinearity (VIF) observations:
+
+# I used VIF to make the **linear baselines** stable and interpretable before moving to trees/GBMs.
+
+# **What I did**
+
+# * Dropped **`Year`** / **`Year_bin`** and kept **`Car_Age`** (the true depreciation signal).
+# * Replaced many brand dummies with **`Brand_Segment`** to avoid dominance by Škoda/VW and brand–engine overlaps.
+# * For diagnostics only, created **`Fuel_encoded`** and **`Body_encoded`** (quick numeric placeholders) to re-check collinearity.
+# * Tested VIF again **including `Engine_bin`** to see if segmentation/encodings broke the near-deterministic links (e.g., Tesla ↔ EV).
+
+# **Result (this last VIF table)**
+
+# * All non-intercept features are **VIF < 5** (most < 3).
+# * The **`const`** row’s VIF is not meaningful and can be ignored.
+# * The largest remaining VIFs (e.g., **`Power_kW` ≈ 3.0**, **`Brand_Segment_*` ≈ 2.7**) are well within common guidelines.
+
+# **Decision for modeling**
+
+# * Even though VIFs are acceptable **with `Engine_bin` present**, I **exclude `Engine_bin`** from the final models because:
+
+#   * It overlaps with **`Fuel`** and **`Brand_Segment`** (redundant signal).
+#   * Some levels are **rare**, which would create sparse/unstable dummies.
+#   * Simpler feature space → leaner pipelines and less risk of overfitting.
+# * Final feature set for modeling:
+#   **Numerical:** `Car_Age`, `Mileage_km`, `Power_kW`
+#   **Categorical (OHE):** `Fuel`, `Body`, `Brand_Segment`
+#   (Trees/GBMs don’t *require* low VIF, but using the same clean set keeps results consistent.)
+
 
 # ### Data collection caveat:
 # This dataset was scraped from autobazar.sk on a single day. Car listings can change quickly, and prices vary with seasonality, promotions, or local supply/demand shifts.
