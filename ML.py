@@ -12,7 +12,7 @@ from scipy.stats import loguniform, randint
 
 # ML
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.linear_model import LinearRegression, RidgeCV
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
@@ -103,6 +103,53 @@ df_ml["Brand_Segment"] = df_ml["Brand"].map(brand_to_segment).fillna("Other")
 # Check results
 print(df_ml["Brand_Segment"].value_counts())
 
+# Quick look at categorical variables
+print(df_ml["Fuel"].unique())
+print(df_ml["Body"].unique())
+print(df_ml["Transmission_simple"].unique())
+print(df_ml["Brand_Segment"].unique())
+
+# Category schema
+FUEL_CATS = [
+    "Petrol","Diesel","Hybrid Diesel","Electric","Hybrid Petrol",
+    "Plug-in Hybrid","LPG","CNG","Unknown"
+]
+BODY_CATS = [
+    "sedan","suv","hatchback","van/mpv","combi","coupe","cabrio",
+    "other","unknown","utility","pickup"
+]
+BRANDSEG_CATS = [
+    "Midrange","Luxury","Upper Midrange","Budget","Other",
+    "Electric Focused","US SUV","Commercial"
+]
+TRANS_CATS = ["automaticka","manualna"]
+
+# Quick sanity checks so warnings become actionable
+def _assert_known(series, allowed, name):
+    unknown = set(series.dropna().unique()) - set(allowed)
+    if unknown:
+        print(f"[WARN] {name}: unseen categories in data: {sorted(unknown)} (they'll be ignored)")
+
+_assert_known(df_ml["Fuel"], FUEL_CATS, "Fuel")
+_assert_known(df_ml["Body"], BODY_CATS, "Body")
+_assert_known(df_ml["Brand_Segment"], BRANDSEG_CATS, "Brand_Segment")
+_assert_known(df_ml["Transmission_simple"], TRANS_CATS, "Transmission_simple")
+
+# Encoders wired to the schema + chosen baselines
+ohe_bin = OneHotEncoder(
+    categories=[TRANS_CATS],
+    drop=["automaticka"],
+    handle_unknown="ignore",
+    dtype=float
+)
+
+ohe_cat = OneHotEncoder(
+    categories=[FUEL_CATS, BODY_CATS, BRANDSEG_CATS],
+    drop=["Petrol","sedan","Midrange"],
+    handle_unknown="ignore",
+    dtype=float
+)
+
 # ============================================
 # MODEL 1: Base Linear Regression
 # ============================================
@@ -119,9 +166,9 @@ y = df_ml["Log_Price"]
 
 # Define preprocessing and modeling pipeline
 preprocess = ColumnTransformer([
-    ("num", StandardScaler(), num_cols),
-    ("bin", OneHotEncoder(drop="if_binary", handle_unknown="ignore"), bin_cols),
-    ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), cat_cols),
+    ("num", StandardScaler(), ["Car_Age","Mileage_km","Power_kW"]),
+    ("bin", ohe_bin, ["Transmission_simple"]),
+    ("cat", ohe_cat, ["Fuel","Body","Brand_Segment"]),
 ])
 
 pipe = Pipeline([
@@ -167,9 +214,9 @@ X_base_v2 = df_ml[num_cols_v2 + bin_cols + cat_cols]
 # Redefine preprocess and pipeline
 preprocess_v2 = ColumnTransformer(
     transformers=[
-        ("num", "passthrough", num_cols_v2),
-        ("bin", OneHotEncoder(drop="if_binary", handle_unknown="ignore"), bin_cols),
-        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), cat_cols),
+        ("num", StandardScaler(), num_cols_v2),
+        ("bin", ohe_bin, ["Transmission_simple"]),
+        ("cat", ohe_cat, ["Fuel","Body","Brand_Segment"]),
     ],
     remainder="drop"
 )
@@ -205,8 +252,8 @@ X_base_v3 = df_ml[num_cols_v3 + bin_cols + cat_cols]
 preprocess_v3 = ColumnTransformer(
     transformers=[
         ("num", StandardScaler(), num_cols_v3),
-        ("bin", OneHotEncoder(drop="if_binary", handle_unknown="ignore"), bin_cols),
-        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), cat_cols),
+        ("bin", ohe_bin, ["Transmission_simple"]),
+        ("cat", ohe_cat, ["Fuel","Body","Brand_Segment"])
     ],
     remainder="drop"
 )
@@ -299,21 +346,21 @@ cat_pipe = Pipeline([
 ])
 
 preprocess_rf = ColumnTransformer([
-    ("num", "passthrough", num_cols_rf),
-    ("bin", bin_pipe, bin_cols_rf),
-    ("cat", cat_pipe, cat_cols_rf),
+    ("num", "passthrough", ["Car_Age","Mileage_km","Power_kW"]),
+    ("bin", ohe_bin, ["Transmission_simple"]),
+    ("cat", ohe_cat, ["Fuel","Body","Brand_Segment"]),
 ])
 
 # Use log-price target as with linear models 
 X_train_rf, X_test_rf, y_train_rf, y_test_rf = train_test_split( X_rf, y, test_size=0.2, random_state=42 )
 
 # Define model and pipeline
-rf = RandomForestRegressor(n_estimators=600, random_state=42, n_jobs=-1)
+rf = RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1)
 pipe_rf = Pipeline([("prep", preprocess_rf), ("model", rf)])
 
 # Search space
 param_dist = {
-    "model__n_estimators": randint(400, 1000),
+    "model__n_estimators": randint(200, 800),
     "model__max_depth": [None, 10, 14, 18, 22, 26],
     "model__min_samples_split": [2, 5, 10, 20],
     "model__min_samples_leaf": [1, 2, 4, 8],
@@ -352,7 +399,7 @@ est = best_rf.named_steps["model"]
 
 perm = permutation_importance(
     est, X_test_enc, y_test_rf,
-    n_repeats=5, random_state=42, n_jobs=-1,
+    n_repeats=5, random_state=42, n_jobs=1,
     scoring="neg_mean_absolute_error"
 )
 
@@ -425,29 +472,12 @@ print("DT best params:", search_dt.best_params_)
 # # MODEL 6: Hist Gradient Boosting Regressor
 # # =========================================
 
-# Custom OneHotEncoder wrapper to ensure dense output across sklearn versions
-def DenseOHE(**kwargs):
-    try:
-        return OneHotEncoder(sparse_output=False, **kwargs)
-    except TypeError:
-        return OneHotEncoder(sparse=False, **kwargs)
-
 # Use the same preprocess and split as RF for fair comparison
-bin_pipe_hgb = Pipeline([
-    ("impute", SimpleImputer(strategy="most_frequent")),
-    ("ohe", DenseOHE(drop="if_binary", handle_unknown="ignore"))
-])
-
-cat_pipe_hgb = Pipeline([
-    ("impute", SimpleImputer(strategy="most_frequent")),
-    ("ohe", DenseOHE(drop="first", handle_unknown="ignore"))
-])
-
 preprocess_hgb = ColumnTransformer(
     transformers=[
         ("num", "passthrough", ["Car_Age","Mileage_km","Power_kW"]),
-        ("bin", bin_pipe_hgb, ["Transmission_simple"]),
-        ("cat", cat_pipe_hgb, ["Fuel","Body","Brand_Segment"]),
+        ("bin", ohe_bin, ["Transmission_simple"]),
+        ("cat", ohe_cat, ["Fuel","Body","Brand_Segment"]),
     ],
     sparse_threshold=0.0
 )
@@ -472,7 +502,7 @@ param_dist = {
 search_hgb = RandomizedSearchCV(
     pipe_hgb,
     param_distributions=param_dist,
-    n_iter=40,
+    n_iter=25,
     scoring="neg_mean_absolute_error",
     cv=3,
     random_state=42,
@@ -533,3 +563,9 @@ results += [{"model":"DT", "MAE": mean_absolute_error(np.expm1(y_test_rf), pred_
 results += [{"model":"HGB", "MAE": mean_absolute_error(np.expm1(y_test_rf), y_pred),
              "R2": r2_score(np.expm1(y_test_rf), y_pred)}]
 print(pd.DataFrame(results).sort_values("MAE"))
+
+### What’s working best (so far):
+# Random Forest (log-target): MAE ~ €1.83k, R² ~ 0.85, rMAE ~ 19%
+# HistGradientBoosting (log-target): MAE ~ €1.85k, R² ~ 0.85, rMAE ~ 19–20%
+### What I’ll do next
+# I’ll try a few quick improvements and see if I can squeeze the MAE down a bit more.
