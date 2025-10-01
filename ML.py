@@ -23,6 +23,12 @@ from sklearn.inspection import permutation_importance
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import HistGradientBoostingRegressor
 
+# File system
+from pathlib import Path
+from joblib import dump
+
+ARTIFACTS = Path("artifacts")
+ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
 # Load preprocessed data
 df = pd.read_csv("data/cleaned_automarket_autos.csv")
@@ -390,6 +396,12 @@ print(f"RF best params: {search.best_params_}")
 print(f"RF MAE: {mae_rf:.2f} €")
 print(f"RF R²:  {r2_rf:.3f}")
 
+# Save the best RF pipeline
+dump(best_rf, ARTIFACTS / "rf_pipeline.joblib")
+print("Saved RF pipeline → artifacts/rf_pipeline.joblib")
+
+
+
 # Permutation importance on encoded matrix
 prep = best_rf.named_steps["prep"]
 X_test_enc = prep.transform(X_test_rf)
@@ -520,6 +532,10 @@ print("Model 6: Hist Gradient Boosting Regressor")
 print("HGB MAE €:", mean_absolute_error(np.expm1(y_test_rf), y_pred))
 print("HGB R²  :", r2_score(np.expm1(y_test_rf), y_pred))
 print("HGB best params:", search_hgb.best_params_)
+
+# Save the best HGB pipeline
+dump(best_hgb, ARTIFACTS / "hgb_pipeline.joblib")
+print("Saved HGB pipeline → artifacts/hgb_pipeline.joblib")
 
 # ===============================================
 # Baseline and Relative MAE (rMAE) for RF and HGB
