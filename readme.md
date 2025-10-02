@@ -4,6 +4,14 @@
 I scraped a snapshot of the Slovak used-car market and built some models to predict prices.  
 It’s a portfolio/learning project — my background is metallurgy (PhD), and I’m moving into Data Science.
 
+## Data pipeline (scrape → clean)
+
+This repo includes a simple 3-step pipeline I used to build the dataset:
+
+1) `link_collector.py` — collects listing URLs  
+2) `detail_scraper.py` — fetches details for each listing  
+3) `clean_preprocess.py` — cleaning & feature prep  
+
 ## Data
 - One-day snapshot from August 2025 (~20k listings after cleaning)
 - Columns like: Price, Brand, Model, Year, Mileage_km, Power_kW, Fuel, Transmission, etc.
@@ -12,7 +20,7 @@ It’s a portfolio/learning project — my background is metallurgy (PhD), and I
 ## EDA in a sentence
 Older and high-mileage cars are cheaper (no surprise), power helps, premium brands carry a premium, and automatics + hybrids/EVs trend higher.
 
-## Modeling (v1)
+## Modeling
 - Target: **log-price** (for stability), then convert back to €
 - Features: `Car_Age`, `Mileage_km`, `Power_kW` + `Fuel`, `Body`, `Brand_Segment`, `Transmission_simple`
 - Categorical encoding uses a fixed schema to stay consistent across train/test
@@ -29,11 +37,3 @@ One-day data, listing prices (not final sale), a few “unknown” categories. N
 
 ## What’s next
 I’ll keep tuning the tree models (and maybe try a tiny ensemble) to chip away at MAE.
-
-## Run it
-```bash
-pip install -r requirements.txt
-# EDA
-jupyter notebook EDA_notebook.ipynb
-# Train models via script (trains 6 models end-to-end and prints metrics)
-python ML.py
