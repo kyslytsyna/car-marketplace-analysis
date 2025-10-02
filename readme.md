@@ -35,5 +35,5 @@ I’ll keep tuning the tree models (and maybe try a tiny ensemble) to chip away 
 pip install -r requirements.txt
 # EDA
 jupyter notebook EDA_notebook.ipynb
-# Or train via script
-python src/train_models.py
+# Train models via script (trains 6 models end-to-end and prints metrics)
+python ML.py
