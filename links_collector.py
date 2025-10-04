@@ -6,7 +6,7 @@ from requests.exceptions import HTTPError
 BASE_SEARCH    = "https://osobne-auta.autobazar.sk"
 ORDER_PARAM    = "23"
 MAX_PAGES      = 2000
-DELAY          = 2.0                  # seconds between page requests
+DELAY          = 2.0
 URL_CACHE_FILE = "data/listing_urls.json"
 
 session = requests.Session()
@@ -32,7 +32,6 @@ def get_listing_links(page: int):
     return links
 
 def main():
-    # load any existing URLs
     try:
         with open(URL_CACHE_FILE, "r", encoding="utf-8") as f:
             all_links = json.load(f)
@@ -49,11 +48,9 @@ def main():
             else:
                 raise
 
-        # append + dedupe
         all_links.extend(new)
         all_links = list(dict.fromkeys(all_links))
 
-        # save immediately
         with open(URL_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(all_links, f, ensure_ascii=False, indent=2)
 

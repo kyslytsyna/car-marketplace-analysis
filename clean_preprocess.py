@@ -6,16 +6,13 @@ import re
 df = pd.read_csv('data/automarket_autos.csv')
 pd.set_option('display.max_columns', None)
 
-# Initial inspection
 print(df.head())
 print(df.shape)
 print(df.dtypes)
 print(df.describe(include='all'))
 
-# Save original row count for later comparison
 orig_rows = df.shape[0] 
 
-# Rename columns to English
 df.rename(columns={
     "Cena": "Price",
     "Rok výroby": "Year",
@@ -31,11 +28,9 @@ df.rename(columns={
     "Norma": "EmissionStandard"
 }, inplace=True)
 
-# Check for missing values
 print("Missing values per column:")
 print(df.isna().sum()) 
 
-# Check for rows with missing Title
 print(df[df['Title'].isna()])  
 
 # Drop rows from non-detail listing pages (e.g., 'https://kia-cee-d-sw.autobazar.sk/')
@@ -46,10 +41,10 @@ df = df[df['Title'].notna()].copy()
 df = df[df['Price'].notna()].copy()
 print(df.isna().sum())
 
-# Check for duplicates
+
 print("Number of duplicate rows:", df.duplicated().sum())
 
-# Normalize text: remove accents, convert to lowercase
+
 def normalize_text(text):
     if pd.isna(text):
         return text
@@ -78,32 +73,27 @@ brands_norm = {normalize_text(b): b for b in raw_brands}
 brands_norm["vw"] = "Volkswagen"
 brands_norm["skodu"] = "Skoda"
 brands_norm["rolls royce"] = "Rolls-Royce"
-# Tokenize: split on whitespace
+
 def tokenize(text):
     return normalize_text(text).split()
 
-# Brand‐finder: check each token or adjacent token pair
 def find_brand(title):
     tokens = tokenize(title)
-    # Check single‐word brands first
     for tok in tokens:
         if tok in brands_norm:
             return brands_norm[tok]
-    # Then check two‐word combos for multiword makes
     for i in range(len(tokens)-1):
         combo = f"{tokens[i]} {tokens[i+1]}"
         if combo in brands_norm:
             return brands_norm[combo]
     return "Unknown"
 
-# Apply to DataFrame
 df["Brand"] = df["Title"].apply(find_brand)
 
 print(df["Brand"].value_counts())
 print(df[df["Brand"] == "Unknown"])
 print("Unknown brands:", (df["Brand"] == "Unknown").sum())
 
-# Drop them in place
 df = df[df["Brand"] != "Unknown"].reset_index(drop=True)
 
 # Convert numeric columns to appropriate types
@@ -165,9 +155,12 @@ keywords = [
     "motorová píla", " kosačka",
     "fukar"
 ]
-# Filter out rows with these keywords in Title or Price < 200 or > 315000
+
+min_price = 200
+max_price = 315000
+# Filter out rows with these keywords in Title or Price outside limits
 mask_keywords = df["Title"].str.contains("|".join(keywords), case=False, na=False)
-mask_price = (df["Price"] < 200) | (df["Price"] > 315000)
+mask_price = (df["Price"] < min_price) | (df["Price"] > max_price)
 df_filtered = df[~(mask_keywords | mask_price)].copy()
 
 # Inspect dropped rows
@@ -187,12 +180,10 @@ print("Number of NaNs in 'Year': ",df_filtered["Year"].isna().sum())
 
 # Fill missing Year values for 'nove' (new) condition
 # Use the most common Year for 'nove' condition
-# Build the mask BEFORE filling
 to_fill_mask = (df_filtered["Condition"] == "nove") & (df_filtered["Year"].isna())
 n_missing_before = int(to_fill_mask.sum())
 print("Missing 'Year' for 'nove' before:", n_missing_before)
 
-# Fill only those
 most_common_new_year = df_filtered.loc[df_filtered["Condition"]=="nove", "Year"].mode()[0]
 df_filtered.loc[to_fill_mask, "Year"] = most_common_new_year
 
@@ -210,7 +201,7 @@ print(f"Dropped {before - after} rows with missing Year")
 
 # Data correction note:
 # During inspection, I found some obvious mistakes in scraped values 
-# (e.g., car Year listed as 2026 instead of 2022).
+# (for exapmle: car Year listed as 2026 instead of 2022).
 # Where I could confirm the correct value directly from the original ad, 
 # I manually corrected it in the dataset. 
 # If the correct value could not be confirmed with certainty, the row was dropped.
@@ -221,10 +212,8 @@ print(df_filtered["Mileage_km"].describe())
 print("Number of missing values in 'Mileage_km': ",df_filtered["Mileage_km"].isna().sum())
 print(df_filtered[df_filtered["Mileage_km"].isna()].head())
 
-# Fill missing mileage with 0 for new cars
 df_filtered.loc[(df_filtered["Condition"]=="nove") & (df_filtered["Mileage_km"].isna()), "Mileage_km"] = 0
 
-# Check how many NaNs are still left
 print("Remaining NaN in Mileage_km:", df_filtered["Mileage_km"].isna().sum())
 
 # Drop rows with still missing Mileage_km
@@ -235,40 +224,36 @@ after = df_filtered.shape[0]
 print(f"Dropped {before - after} rows with missing Mileage_km")
 
 # Check for odd values in Mileage_km
-# Check the top 20 largest mileage values
 print("\nTop 20 highest mileage:")
 print(df_filtered.sort_values("Mileage_km", ascending=False)[["Title", "Mileage_km", "Year"]].head(20))
 
-# Define threshold for truly impossible mileage
-MAX_REALISTIC = 3_000_000  # Anything over 3 million km is almost certainly invalid
+MAX_REALISTIC_KM = 3_000_000
 
-# Flag ads exceeding that limit
-mask_implausible = df_filtered["Mileage_km"] > MAX_REALISTIC
+mask_implausible = df_filtered["Mileage_km"] > MAX_REALISTIC_KM
 print("Implausible mileage rows (>3M km):", int(mask_implausible.sum()))
 print(df_filtered.loc[mask_implausible, ["Title", "Mileage_km", "URL_canon"]].head())
 
-# Drop those implausible entries
 df_filtered = df_filtered[~mask_implausible].copy()
 
-# Keep a record of extremely high but valid mileages (e.g., >700k km) since they belong to vans ("dodávky"),
+# Keep a record of extremely high but valid mileages since they belong to vans ("dodávky"),
 # where such extreme mileage is still realistic.
 mask_high = df_filtered["Mileage_km"] > 700_000
 print("High but valid mileage rows (>800k km):", int(mask_high.sum()))
 
-# Check the bottom 20 (to catch negatives or weird very small non-zero values)
+# Check the bottom 20
 print("\nLowest 20 mileage values:")
 print(df_filtered.sort_values("Mileage_km", ascending=True)[["Title", "Mileage_km", "Year"]].head(20))
 
+MIN_REALISTIC_KM = 200
 mask_suspicious_low_used = (
     (df_filtered["Condition"] == "pouzivane") &
     (df_filtered["Year"] < 2023) &
-    (df_filtered["Mileage_km"] < 200)
+    (df_filtered["Mileage_km"] < MIN_REALISTIC_KM)
 )
 
 print(df_filtered.loc[mask_suspicious_low_used, ["Title", "Year", "Mileage_km", "Price", "URL_canon"]].head(20))
 print("Suspicious low mileage used cars:", mask_suspicious_low_used.sum())
 
-# Drop suspicious low mileage used cars
 before = df_filtered.shape[0]
 df_filtered = df_filtered.loc[~mask_suspicious_low_used].copy()
 after = df_filtered.shape[0]
@@ -298,9 +283,9 @@ print(df_filtered.sort_values("Engine_cc", ascending=True)[["Title","Engine_cc",
 #2. 0 l have electromotors, so other than electromotor with 0 l is a mistake
 
 # Filter out engines larger than 10 liters
-mask_too_big = df_filtered["Engine_l"] > 10
-print("Rows with Engine_l > 10:", int(mask_too_big.sum()))
-# Fill those with NaN
+max_engine_l = 10
+mask_too_big = df_filtered["Engine_l"] > max_engine_l
+print("Rows with Engine_l > ", max_engine_l, ":", int(mask_too_big.sum()))
 df_filtered.loc[mask_too_big, ["Engine_l","Engine_cc"]] = np.nan
 
 mask_zero = df_filtered["Engine_l"] == 0
@@ -314,7 +299,8 @@ print(df_filtered.loc[mask_zero_non_electric, ["Title", "Engine_l","Engine_cc", 
 df_filtered.loc[mask_zero_non_electric, ["Engine_l","Engine_cc"]] = np.nan
 
 # most values < 0.6 are parsing errors too (microcars like Smart, Kei cars have 0.6-1.0 l)
-mask_too_small = (df_filtered["Engine_l"] > 0) & (df_filtered["Engine_l"] < 0.6)
+min_engine_l_not_zero = 0.6
+mask_too_small = (df_filtered["Engine_l"] > 0) & (df_filtered["Engine_l"] < min_engine_l_not_zero)
 print(len(df_filtered[mask_too_small]), "rows with too small Engine_l") 
 df_filtered.loc[mask_too_small, ["Engine_l","Engine_cc"]] = np.nan
 
@@ -367,23 +353,19 @@ mask_fake_high_power = (
 print("Clearly fake:", mask_fake_high_power.sum())
 print(df_filtered.loc[mask_fake_high_power, ["Brand","Title","Power_kW","Engine_l","Fuel","URL_canon"]])
 
-# Fix
 df_filtered.loc[mask_fake_high_power, ["Power_kW","Power_PS"]] = np.nan
 
 
 # --- Fuel cleaning ---
-# Show rows with missing Fuel
 missing_fuel = df_filtered[df_filtered["Fuel"].isna()]
 print("Cars with missing Fuel:", missing_fuel.shape[0])
 print(missing_fuel[["Brand","Title","Price","Engine_l","Power_kW","Year","URL_canon"]])
 
-# Drop rows with missing Fuel
 before = df_filtered.shape[0]
 df_filtered = df_filtered[df_filtered["Fuel"].notna()].copy()
 after = df_filtered.shape[0]
 print(f"Dropped {before - after} rows with missing Fuel; new shape: {df_filtered.shape}")
 
-# Check for suspicious Fuel values
 print("Unique Fuel values:")
 print(df_filtered["Fuel"].unique())
 
@@ -406,7 +388,7 @@ print(df_filtered["Fuel_clean"].value_counts())
 def collapse_fuel(x):
     if x in ["Petrol", "Diesel", "Electric", "Plug-in Hybrid"]:
         return x
-    elif "Hybrid" in x:  # Hybrid Petrol, Hybrid Diesel
+    elif "Hybrid" in x:
         return "Hybrid"
     elif x in ["LPG", "CNG", "Other", "Unknown"]:
         return "Alternative Fuels"
@@ -417,7 +399,6 @@ df_filtered["Fuel_collapsed"] = df_filtered["Fuel_clean"].apply(collapse_fuel)
 
 print(df_filtered["Fuel_collapsed"].value_counts())
 
-# Drop the original Fuel column and rename the cleaned one
 df_filtered["Fuel"] = df_filtered["Fuel_clean"]
 df_filtered = df_filtered.drop(columns=["Fuel_clean"])
 
@@ -438,10 +419,8 @@ print(df_filtered.loc[df_filtered["Condition"].isna(), "Title"].head(20).to_list
 is_new  = df_filtered["Title"].str.contains(r"\b(nove|novy|nove vozidlo|new)\b", case=False, regex=True)
 is_demo = df_filtered["Title"].str.contains(r"\b(demo|predvadzacie|predvadzacie vozidlo)\b", case=False, regex=True)
 
-# Only fill where Condition is missing
 mask_na = df_filtered["Condition"].isna()
 
-# Fill explicit cases first
 df_filtered.loc[mask_na & is_new,  "Condition"] = "nove"
 df_filtered.loc[mask_na & is_demo, "Condition"] = "demo"
 
@@ -453,7 +432,6 @@ mask_low_km_price = (
 
 df_filtered.loc[mask_low_km_price, "Condition"] = "demo"
 
-# Everything else still missing - assume used
 still_na = df_filtered["Condition"].isna()
 df_filtered.loc[still_na, "Condition"] = "pouzivane"
 
@@ -467,7 +445,8 @@ print(df_filtered["Condition"].value_counts(dropna=False))
 
 # --- Engine_l and Engine_cc cleaning ---
 print(df_filtered.isna().sum())
-# Engine imputation for EVs
+
+
 mask_engine_na = df_filtered["Engine_cc"].isna()
 
 # detect electric or plug-in hybrid
@@ -535,11 +514,10 @@ df_filtered.loc[mask_numeric, "Engine_bin"] = pd.cut(
     engine_l_eff[mask_numeric],
     bins=bins,
     labels=labels,
-    right=True,           # bin is right-closed: (a, b]
-    include_lowest=False  # 0 is not included here (we already captured EV=0)
+    right=True,
+    include_lowest=False
 ).astype(str)
 
-# Make it an ordered categorical (nice for modeling/plots)
 order = ["EV (0 L)", "≤1.2 L", "1.2–1.8 L", "1.8–2.2 L", "2.2–3.0 L", ">3.0 L", "Unknown"]
 df_filtered["Engine_bin"] = pd.Categorical(df_filtered["Engine_bin"], categories=order, ordered=True)
 
@@ -581,7 +559,7 @@ def simplify_transmission(x):
         return "manualna"
     if "automat" in x:
         return "automaticka"
-    return np.nan   # catch weird stuff like 3073, 3074
+    return np.nan
         
 
 df_filtered["Transmission_simple"] = df_filtered["Transmission"].apply(simplify_transmission)
@@ -604,45 +582,35 @@ print(f"Remaining rows: {after}")
 print("Unique Body values (raw):")
 print(df_filtered["Body"].dropna().unique())
 
-# Define a mapping for Body types
 body_mapping = {
-    # Sedan group
     "sedan": "sedan",
     "limuzina": "sedan",
     "liftback": "sedan",
     "sedan  liftback": "sedan",
 
-    # Hatchback group
     "hatchback": "hatchback",
     "suv  hatchback": "hatchback",
 
-    # Combi / Wagon group
     "combi": "combi",
     "suv  combi": "combi",
 
-    # SUV group
     "suv": "suv",
     "suv  offroad": "suv",
 
-    # Coupe group
     "coupe": "coupe",
     "suv  coupe": "coupe",
 
-    # Cabrio / Convertible group
     "cabrio": "cabrio",
     "roadster": "cabrio",
     "targa": "cabrio",
     "suv  cabrio": "cabrio",
 
-    # Van / MPV group
     "van": "van/mpv",
     "mpv": "van/mpv",
     "minibus": "van/mpv",
 
-    # Pickup group
     "pick up": "pickup",
 
-    # Utility / Commercial group
     "dodavka": "utility",
     "skrina": "utility",
     "valnik": "utility",
@@ -651,19 +619,16 @@ body_mapping = {
     "kabina": "utility",
     "podvozok": "utility",
 
-    # Other / Parsing errors
     "ine": "other",
     "10": "other"
 }
 
-# Apply mapping
 df_filtered["Body_clean"] = df_filtered["Body"].map(body_mapping).fillna("unknown")
 
 print("Original unique values:", df_filtered["Body"].nunique())
 print("Cleaned unique values:", df_filtered["Body_clean"].nunique())
 print(df_filtered["Body_clean"].value_counts(dropna=False))
 
-# Drop the original Body column and rename the cleaned one
 df_filtered["Body"] = df_filtered["Body_clean"]
 df_filtered = df_filtered.drop(columns=["Body_clean"])
 
@@ -672,7 +637,6 @@ df_filtered = df_filtered.drop(columns=["Body_clean"])
 print("Unique Drive values (raw):")
 print(df_filtered["Drive"].dropna().unique())
 
-# Define a mapping for Drive types
 drive_map = {
     "predny": "FWD",
     "zadny": "RWD",
@@ -682,7 +646,6 @@ drive_map = {
 df_filtered["Drive_clean"] = df_filtered["Drive"].map(drive_map).fillna("unknown")
 print(df_filtered["Drive_clean"].value_counts(dropna=False))
 
-# Replace original column with cleaned one
 df_filtered["Drive"] = df_filtered["Drive_clean"]
 df_filtered = df_filtered.drop(columns=["Drive_clean"])
 
@@ -691,7 +654,6 @@ print("Unique colors:", df_filtered["Color"].unique())
 print("\nValue counts:")
 print(df_filtered["Color"].value_counts(dropna=False))
 
-# Define a mapping function for colors
 def map_color(value):
     if pd.isna(value):
         return "unknown"
@@ -730,15 +692,12 @@ def map_color(value):
 df_filtered["Color_clean"] = df_filtered["Color"].apply(map_color)
 print(df_filtered["Color_clean"].value_counts())
 
-# Define rare colors to merge
 rare_colors = ["gold", "beige", "purple", "pink", "orange", "yellow"]
 
 df_filtered["Color_clean"] = df_filtered["Color_clean"].replace(rare_colors, "other")
 
-# Re-check counts
 print(df_filtered["Color_clean"].value_counts())
 
-# Replace original column with cleaned one
 df_filtered["Color"] = df_filtered["Color_clean"]
 df_filtered = df_filtered.drop(columns=["Color_clean"])
 
@@ -746,11 +705,9 @@ df_filtered = df_filtered.drop(columns=["Color_clean"])
 print("Unique Emission Standard values (raw):")
 print(df_filtered["EmissionStandard"].dropna().unique())
 
-# Get rif of junk values
 em = df_filtered["EmissionStandard"]
 em = em.replace({"207": np.nan, "": np.nan, "nan": np.nan})
 
-# Collapse euro 6 sub-variants to 'euro 6'
 em = (em
       .replace({
           "euro 6a": "euro 6",
@@ -762,21 +719,17 @@ em = (em
           "eev": "euro 6"
       }))
 
-# Keep only known labels; everything else → NaN for now
 valid_labels = {"euro 2","euro 3","euro 4","euro 5","euro 6"}
 em = em.where(em.isin(valid_labels), np.nan)
 
-# Set EVs to 'ev' if missing Euro (optional but useful)
 is_ev = df_filtered["Fuel"].str.contains("elektr", case=False, na=False)
 em = np.where(is_ev & em.isna(), "ev", em)
 
-# Final fill for true-missing
 df_filtered["EmissionStandard"] = pd.Series(em, index=df_filtered.index).fillna("unknown")
 
 # Quick audit
 print(df_filtered["EmissionStandard"].value_counts(dropna=False))
 
-# Normalize + ordinal encode
 
 # Normalize to tidy labels (string categorical)
 emap = {
@@ -785,27 +738,23 @@ emap = {
     "euro 4": "Euro 4",
     "euro 5": "Euro 5",
     "euro 6": "Euro 6",
-    "eev":    "Euro 6",   # treat EEV ≈ Euro 6
+    "eev":    "Euro 6",
     "ev":     "EV",
     "unknown":"Unknown"
 }
 
-# Ensure lower-case base, then map → tidy labels
 em_base = df_filtered["EmissionStandard"].astype(str).str.lower().str.strip()
 df_filtered["EmissionStandard_clean"] = em_base.map(emap).fillna("Unknown")
 
 print("EmissionStandard_clean counts:")
 print(df_filtered["EmissionStandard_clean"].value_counts(dropna=False))
 
-# Replace original with cleaned
 df_filtered["EmissionStandard"] = df_filtered["EmissionStandard_clean"]
 
-# Drop the helper column
 df_filtered = df_filtered.drop(columns=["EmissionStandard_clean"])
 
-print(df_filtered.isna().sum())  # Check for remaining NaNs
+print(df_filtered.isna().sum())
 
-# Droop remaining missing values
 before = df_filtered.shape[0]
 df_filtered = df_filtered.dropna(subset=["Engine_cc", "Engine_l"])
 after = df_filtered.shape[0]
@@ -862,7 +811,6 @@ def extract_model_whitelist(title, brand):
         return "Unknown"
     t = title.lower()
     for m_norm, raw in brand_models_norm[brand].items():
-        # word-boundary-ish match; adjust if needed for hyphens/dots
         if re.search(rf"\b{re.escape(m_norm)}\b", t):
             return raw
     return "Unknown"
@@ -871,7 +819,6 @@ df_filtered["Model_simple"] = df_filtered.apply(
     lambda r: extract_model_whitelist(r["Title"], r["Brand"]), axis=1
 )
 
-# (Optional) collapse rare models within each brand to "Other"
 keep_per_brand = 10
 def collapse_rare(group):
     top = group.value_counts().head(keep_per_brand).index
@@ -881,7 +828,6 @@ df_filtered["Model_simple"] = (
     df_filtered.groupby("Brand")["Model_simple"].transform(collapse_rare)
 )
 
-# sanity check
 print(df_filtered["Model_simple"].value_counts().head(50))
 print("Unknown share:", (df_filtered["Model_simple"]=="Unknown").mean())
 

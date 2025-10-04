@@ -10,12 +10,11 @@ from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
 # ---- CONFIG ----
-URL_CACHE_FILE = "data/listing_urls.json"                 # input: list of detail-page URLs
-CSV_NAME       = "data/automarket_autos.csv"              # output CSV
-DELAY_SECONDS  = 2.0                                 # polite delay between detail requests
-TIMEOUT        = (10, 30)                            # (connect, read) timeouts
+URL_CACHE_FILE = "data/listing_urls.json"
+CSV_NAME       = "data/automarket_autos.csv"
+DELAY_SECONDS  = 2.0
+TIMEOUT        = (10, 30)
 
-# Output columns (Slovak site field names to keep your later pipeline stable)
 FIELDS = [
     "Title", "Cena",
     "Rok výroby","Stav","Najazdené",
@@ -26,7 +25,7 @@ FIELDS = [
     "URL","URL_canon"
 ]
 
-# ---- HTTP session with retries ----
+# HTTP session with retries
 session = requests.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -44,7 +43,7 @@ adapter = HTTPAdapter(max_retries=retry)
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 
-# ---- Robust price matching helpers ----
+# Robust price matching helpers
 PRICE_ONLY_RE = re.compile(r'^\s*\d[\d\s\.,]*\s*€\s*$', re.I)
 
 def extract_price_from_soup(soup: BeautifulSoup) -> str:
@@ -57,16 +56,13 @@ def extract_price_from_soup(soup: BeautifulSoup) -> str:
       3) worded cases like 'Cena: Dohodou' / 'Na vyžiadanie'
       4) last-ditch: any '... €' line that doesn't look like fees/DPH
     """
-    # 0) microdata (sometimes present)
     meta = soup.find("meta", attrs={"itemprop": "price"})
     if meta and meta.get("content"):
         content = meta["content"].strip()
-        # normalize numeric-like content to '<amount> €'
         if re.search(r'^\d[\d\s\.,]*$', content):
             return f"{content} €"
         return content
 
-    # 1) Try known selectors
     for css in [
         "h2.p-amount",
         ".p-amount",
@@ -81,19 +77,16 @@ def extract_price_from_soup(soup: BeautifulSoup) -> str:
             if "€" in txt or re.search(r"\d", txt):
                 return txt
 
-    # 2) Headings with just the amount (covers <h1><strong>1 000 €</strong></h1>)
     for tag in ["h1", "h2", "h3"]:
         for el in soup.find_all(tag):
             txt = el.get_text(" ", strip=True)
             if PRICE_ONLY_RE.match(txt):
                 return txt
 
-    # 3) Worded cases
     worded = soup.find(string=re.compile(r'Cena\s*:\s*(Dohodou|Na vyžiadanie)', re.I))
     if worded:
         return worded.strip()
 
-    # 4) Last-ditch: any amount with €, but avoid typical fee lines
     any_amount = soup.find(string=re.compile(r'\d[\d\s\.,]*\s*€'))
     if any_amount:
         txt = any_amount.strip()
@@ -103,7 +96,7 @@ def extract_price_from_soup(soup: BeautifulSoup) -> str:
     return ""
 
 
-# ---- helpers ----
+# helpers
 def extract_title_from_url(url: str) -> str:
     """
     Build a human-ish title from the URL slug:
@@ -111,7 +104,6 @@ def extract_title_from_url(url: str) -> str:
     """
     try:
         parts = urlparse(url).path.strip("/").split("/")
-        # detail URL format is usually /<id>/<slug>
         if len(parts) >= 2:
             slug = parts[1]
         else:
@@ -133,14 +125,14 @@ def parse_ad_details(url: str) -> dict:
     data = {f: "" for f in FIELDS}
     data["URL"] = url
 
-    # Canonical URL (helps dedupe/merging later)
+    # Canonical URL
     can = soup.find("link", rel="canonical")
     data["URL_canon"] = (can["href"].strip() if can and can.has_attr("href") else url)
 
-    # Title – generate from URL slug (fast & stable)
+    # Title – generate from URL slug
     data["Title"] = extract_title_from_url(data["URL_canon"] or url)
 
-    # Price ("Cena") – robust extractor
+    # Price ("Cena")
     data["Cena"] = extract_price_from_soup(soup)
 
     # Parameters table
@@ -155,27 +147,24 @@ def parse_ad_details(url: str) -> dict:
             data[key] = text
 
     # SellerType (firma vs súkromný predajca)
-    # 1) textual hint
     p_txt = soup.find("p", string=lambda t: t and ("Firma" in t or "Súkromný predajca" in t))
     if p_txt:
         txt = p_txt.get_text(" ", strip=True)
         data["SellerType"] = "Firma" if "Firma" in txt else "Súkromný predajca"
     else:
-        # 2) icon fallback
         icon = soup.select_one("h2.seller__title .icon_firm, h2.seller__title .icon_anonym")
         if icon and "icon_firm" in icon.get("class", []):
             data["SellerType"] = "Firma"
         elif icon and "icon_anonym" in icon.get("class", []):
             data["SellerType"] = "Súkromný predajca"
         else:
-            data["SellerType"] = ""  # unknown
+            data["SellerType"] = ""
 
     return data
 
 def load_url_list(path: str) -> list:
     with open(path, "r", encoding="utf-8") as f:
         urls = json.load(f)
-    # ensure unique and stable order
     seen, deduped = set(), []
     for u in urls:
         if u not in seen:
@@ -192,7 +181,6 @@ def load_already_scraped(csv_path: str) -> set:
     scraped = set()
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as fp:
         reader = csv.DictReader(fp)
-        # prefer canonical if present, else raw URL
         key = "URL_canon" if "URL_canon" in reader.fieldnames else ("URL_canonical" if "URL_canonical" in reader.fieldnames else "URL")
         for row in reader:
             u = (row.get(key) or row.get("URL") or "").strip()
@@ -201,11 +189,9 @@ def load_already_scraped(csv_path: str) -> set:
     return scraped
 
 def main():
-    # Load all URLs
     all_links = load_url_list(URL_CACHE_FILE)
     print(f"Loaded {len(all_links)} URLs from {URL_CACHE_FILE}")
 
-    # Prepare CSV (append if exists to support resume)
     file_exists = os.path.exists(CSV_NAME)
     scraped = load_already_scraped(CSV_NAME)
     print(f"Found {len(scraped)} already-scraped rows in {CSV_NAME}" if file_exists else "No existing CSV, will create a new one.")
@@ -217,7 +203,6 @@ def main():
             writer.writeheader()
 
         for idx, url in enumerate(all_links, 1):
-            # skip if we've already scraped canonical URL or the raw URL
             if url in scraped:
                 continue
 
@@ -225,7 +210,6 @@ def main():
             try:
                 rec = parse_ad_details(url)
 
-                # if canonical known and already scraped, skip
                 canon = rec.get("URL_canon") or ""
                 if canon and canon in scraped:
                     continue
@@ -234,7 +218,6 @@ def main():
                 fp.flush()
                 written += 1
 
-                # mark both forms as scraped for this run
                 if canon:
                     scraped.add(canon)
                 scraped.add(url)
